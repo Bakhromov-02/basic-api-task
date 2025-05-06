@@ -2,14 +2,15 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { AppService } from './app.service';
-import { AppController } from './app.controller';
+import { UsersModule } from './users/users.module';
 
 import { typeOrmConfig } from '@common/config';
 import { LoggerMiddleware } from '@common/middleware';
 
 @Module({
   imports: [
+    UsersModule,
+    
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -17,11 +18,10 @@ import { LoggerMiddleware } from '@common/middleware';
         await typeOrmConfig(configService),
     }),
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [],
+  providers: [],
 })
-
-export class AppModule implements NestModule{
+export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }

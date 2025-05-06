@@ -17,7 +17,7 @@ services:
       - app-network
 
   app:
-    container_name: taxi-app
+    container_name: app
     build:
       context: .
       dockerfile: Dockerfile
