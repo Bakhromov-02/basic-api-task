@@ -1,19 +1,4 @@
 services:
-  app:
-    container_name: taxi-app
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    depends_on:
-      - db
-    ports:
-      - ${API_PORT}:${API_PORT}
-    restart: always
-    networks:
-      - app-network
-
   db:
     image: postgis/postgis:16-3.4-alpine
     container_name: ${TYPEORM_DATABASE}
@@ -31,8 +16,24 @@ services:
     networks:
       - app-network
 
+  app:
+    container_name: taxi-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - db
+    ports:
+      - 7001:${API_PORT}
+    restart: always
+    networks:
+      - app-network
+
 volumes:
   pgdata:
+
 
 networks:
   app-network:
