@@ -1,0 +1,39 @@
+services:
+  app:
+    container_name: taxi-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - db
+    ports:
+      - ${API_PORT}:${API_PORT}
+    restart: always
+    networks:
+      - app-network
+
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: ${TYPEORM_DATABASE}
+    restart: always
+    environment:
+      POSTGRES_USER: ${TYPEORM_USERNAME}
+      POSTGRES_PASSWORD: ${TYPEORM_PASSWORD}
+      POSTGRES_DB: ${TYPEORM_DATABASE}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    ports:
+      - ${TYPEORM_PORT}:5432
+    env_file:
+      - .env
+    networks:
+      - app-network
+
+volumes:
+  pgdata:
+
+networks:
+  app-network:
+    driver: bridge
