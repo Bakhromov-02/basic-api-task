@@ -1,4 +1,3 @@
-// filters/http-exception.filter.ts
 import {
     Catch,
     HttpStatus,

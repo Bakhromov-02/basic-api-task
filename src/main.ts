@@ -5,13 +5,26 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 import { HttpExceptionFilter } from '@common/filters';
+import { ApiBearerAuthConst } from '@common/constants';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    bodyParser: true,
     cors: true, 
+    bodyParser: true,
     bufferLogs: true, 
   });
+
+  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      always: true,
+      whitelist: true,
+      transform: true,
+      stopAtFirstError: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
 
   app.setGlobalPrefix('api');
 
@@ -28,7 +41,7 @@ async function bootstrap() {
       description: 'Enter JWT token',
       in: 'header',
     },
-    'ApiBearerAuthConst', 
+    ApiBearerAuthConst, 
   )
   .build();
 
@@ -37,13 +50,10 @@ async function bootstrap() {
     swaggerOptions: {
       persistAuthorization: true,
     },
-    customSiteTitle: 'REIS API',
+    customSiteTitle: 'APP API',
   });
 
   app.use(helmet());
-  
-  app.useGlobalFilters(new HttpExceptionFilter());
-  
   await app.listen(process.env.API_PORT ?? 3000, () => {
     console.log(`Server is running on port ${process.env.API_PORT ?? 3000}`);
   });

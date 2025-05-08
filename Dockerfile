@@ -1,5 +1,5 @@
 # Development layer
-FROM node:slim AS builder
+FROM node:20-alpine3.20 AS builder
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ RUN npm prune --production && \
     npm cache clean --force
 
 # Production layer
-FROM node:slim AS production
+FROM node:20-alpine3.20 AS production
 
 ENV NODE_ENV=production
 
