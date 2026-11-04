@@ -1,33 +1,19 @@
-import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
-import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
 
-export const typeOrmConfig = async (
-  config: ConfigService,
-): Promise<TypeOrmModuleOptions> => {
-  return {
-    type: config.getOrThrow<'postgres'>('TYPEORM_CONNECTION'),
-    username: config.getOrThrow<string>('TYPEORM_USERNAME'),
-    password: config.getOrThrow<string>('TYPEORM_PASSWORD'),
-    database: config.getOrThrow<string>('TYPEORM_DATABASE'),
-    entities: [join(__dirname, '..', 'dist/**/*.entity{.ts,.js}')],
-    synchronize: true, //TODO use migration instead
-    autoLoadEntities: true,
-    logging: process.env.NODE_ENV !== 'production',
-    host: config.getOrThrow<string>('TYPEORM_DATABASE') || '127.0.0.1', // Use 'localhost' if running outside of Docker
-    port: config.getOrThrow<number>('TYPEORM_PORT'),
-    url: `postgres://${config.getOrThrow<string>(
-      'TYPEORM_USERNAME',
-    )}:${config.getOrThrow<string>(
-      'TYPEORM_PASSWORD',
-    )}@db:5432/${config.getOrThrow<string>('TYPEORM_DATABASE')}`,
-    namingStrategy: new SnakeNamingStrategy(),
-    extra: {
-      max: 20, // Connection pool size
-      connectionTimeoutMillis: 5000, // How long to wait for connection
-    },
-    retryAttempts: 3,
-    retryDelay: 3000,
-  };
-};
+import { buildDataSourceOptions } from '../../database/database.options';
+
+export const typeOrmConfig = (config: ConfigService): TypeOrmModuleOptions => ({
+  ...buildDataSourceOptions({
+    TYPEORM_HOST: config.get('TYPEORM_HOST'),
+    TYPEORM_PORT: config.get('TYPEORM_PORT'),
+    TYPEORM_USERNAME: config.get('TYPEORM_USERNAME'),
+    TYPEORM_PASSWORD: config.get('TYPEORM_PASSWORD'),
+    TYPEORM_DATABASE: config.get('TYPEORM_DATABASE'),
+    TYPEORM_LOGGING: config.get('TYPEORM_LOGGING'),
+  }),
+  // Apply pending migrations on startup so `docker compose up` gives a ready database.
+  migrationsRun: true,
+  retryAttempts: 3,
+  retryDelay: 3000,
+});

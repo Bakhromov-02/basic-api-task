@@ -12,27 +12,22 @@ import { LoggerMiddleware } from '@common/middlewares';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        typeOrmConfig(configService),
+    }),
     UsersModule,
     AuthModule,
-
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: async (configService: ConfigService) =>
-        await typeOrmConfig(configService),
-    }),
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: './.env' }),
   ],
-  controllers: [],
   providers: [
-    {
-      provide: APP_GUARD,
-      useClass: AccessTokenGuard,
-    },
+    // Every route requires a valid access token unless marked with @Public().
+    { provide: APP_GUARD, useClass: AccessTokenGuard },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    consumer.apply(LoggerMiddleware).forRoutes('{*splat}');
   }
 }
