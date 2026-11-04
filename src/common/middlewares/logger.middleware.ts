@@ -3,16 +3,14 @@ import { Request, Response, NextFunction } from 'express';
 
 @Injectable()
 export class LoggerMiddleware implements NestMiddleware {
-  private readonly logger = new Logger('LoggerMiddleware');
-  
+  private readonly logger = new Logger('HTTP');
+
   use(req: Request, res: Response, next: NextFunction) {
-    const startTime = Date.now();
+    const start = Date.now();
 
     res.on('finish', () => {
-      const endTime = Date.now();
-      const duration = endTime - startTime;
       this.logger.log(
-        `Request started at ${new Date(startTime).toISOString()} and finished at ${new Date(endTime).toISOString()} for ${req.method} ${req.originalUrl}, took ${duration}ms`,
+        `${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`,
       );
     });
 

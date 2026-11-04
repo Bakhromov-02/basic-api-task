@@ -1,40 +1,55 @@
 import {
-    Catch,
-    HttpStatus,
-    ArgumentsHost,
-    HttpException,
-    ExceptionFilter,
-  } from '@nestjs/common';
-  import { Request, Response } from 'express';
-  
-  @Catch()
-  export class HttpExceptionFilter implements ExceptionFilter {
-    catch(exception: unknown, host: ArgumentsHost) {
-      const ctx = host.switchToHttp();
-      const response = ctx.getResponse<Response>();
-      const request = ctx.getRequest<Request>();
+  Catch,
+  Logger,
+  HttpStatus,
+  ArgumentsHost,
+  HttpException,
+  ExceptionFilter,
+} from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
+import { Request, Response } from 'express';
 
-      let status = HttpStatus.INTERNAL_SERVER_ERROR;
-      let message = 'Internal server error';
+const PG_UNIQUE_VIOLATION = '23505';
 
-      if (exception instanceof HttpException) {
-        status = exception.getStatus();
-        const exceptionResponse = exception.getResponse();
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
 
-        // Handle string or object message
-        message =
-          typeof exceptionResponse === 'string'
-            ? exceptionResponse
-            : (exceptionResponse as any).message || message;
-      }
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
 
-      response.status(status).json({
-        statusCode: status,
-        timestamp: new Date().toISOString(),
-        path: request.url,
-        method: request.method,
-        message,
-      });
+    let status = HttpStatus.INTERNAL_SERVER_ERROR;
+    let message: string | string[] = 'Internal server error';
+
+    if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      const body = exception.getResponse();
+      message =
+        typeof body === 'string'
+          ? body
+          : ((body as { message?: string | string[] }).message ?? message);
+    } else if (
+      exception instanceof QueryFailedError &&
+      (exception.driverError as { code?: string })?.code === PG_UNIQUE_VIOLATION
+    ) {
+      status = HttpStatus.CONFLICT;
+      message = 'Resource already exists';
+    } else {
+      // Unexpected error: log the details, never send them to the client.
+      this.logger.error(
+        `${request.method} ${request.originalUrl}`,
+        exception instanceof Error ? exception.stack : String(exception),
+      );
     }
+
+    response.status(status).json({
+      statusCode: status,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      method: request.method,
+      message,
+    });
   }
-  
+}

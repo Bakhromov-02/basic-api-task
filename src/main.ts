@@ -1,61 +1,48 @@
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
 
-import { HttpExceptionFilter } from '@common/filters';
 import { ApiBearerAuthConst } from '@common/constants';
-import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    cors: true, 
-    bodyParser: true,
-    bufferLogs: true, 
-  });
-
-  app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      always: true,
-      whitelist: true,
-      transform: true,
-      stopAtFirstError: true,
-      forbidNonWhitelisted: true,
-    }),
+  const app = configureApp(
+    await NestFactory.create(AppModule, { bufferLogs: true }),
   );
 
-  app.setGlobalPrefix('api');
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('User Management API')
+    .setDescription(
+      'User accounts with JWT authentication and refresh token rotation',
+    )
+    .setVersion('1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Access token from /api/auth/login',
+      },
+      ApiBearerAuthConst,
+    )
+    .build();
 
-  const config = new DocumentBuilder()
-  .setTitle('App')
-  .setDescription('Api for app')
-  .setVersion('1.0')
-  .addBearerAuth(
+  SwaggerModule.setup(
+    'docs',
+    app,
+    SwaggerModule.createDocument(app, swaggerConfig),
     {
-      type: 'http',
-      scheme: 'bearer',
-      bearerFormat: 'JWT',
-      name: 'JWT',
-      description: 'Enter JWT token',
-      in: 'header',
+      swaggerOptions: { persistAuthorization: true },
+      customSiteTitle: 'User Management API',
     },
-    ApiBearerAuthConst, 
-  )
-  .build();
+  );
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-    },
-    customSiteTitle: 'APP API',
-  });
-
-  app.use(helmet());
-  await app.listen(process.env.API_PORT ?? 3000, () => {
-    console.log(`Server is running on port ${process.env.API_PORT ?? 3000}`);
-  });
+  const port = app.get(ConfigService).get<number>('API_PORT', 3000);
+  await app.listen(port);
+  Logger.log(`Server is running on port ${port} — docs at /docs`, 'Bootstrap');
 }
+
 bootstrap();
