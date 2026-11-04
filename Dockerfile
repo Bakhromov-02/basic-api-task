@@ -1,43 +1,26 @@
-# Development layer
+# Build stage
 FROM node:20-alpine3.20 AS builder
 
 WORKDIR /app
 
-# Copy only files needed for install
-COPY package*.json ./
-COPY tsconfig*.json ./
-COPY nest-cli.json ./
-
-# Copy the .env file
-COPY .env ./
-
-# Install dependencies
+COPY package*.json tsconfig*.json nest-cli.json ./
 RUN npm ci
 
-# Copy source code
 COPY src/ ./src/
+RUN npm run build && npm prune --omit=dev && npm cache clean --force
 
-# Build application
-RUN npm run build
-
-# Remove development dependencies and clear npm cache
-RUN npm prune --production && \
-    npm cache clean --force
-
-# Production layer
+# Runtime stage
 FROM node:20-alpine3.20 AS production
 
 ENV NODE_ENV=production
-
 WORKDIR /app
 
-# Copy only necessary files from builder
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
+# Configuration comes from the environment at runtime (docker compose env_file), never from the image.
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/package.json ./
 
-# Expose application port
+USER node
 EXPOSE 7000
 
-# Start application
-CMD [ "node", "dist/main.js" ]
+CMD ["node", "dist/main.js"]

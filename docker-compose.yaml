@@ -1,40 +1,36 @@
 services:
   db:
     image: postgres:17.4-alpine
-    container_name: ${TYPEORM_DATABASE}
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${TYPEORM_USERNAME}
       POSTGRES_PASSWORD: ${TYPEORM_PASSWORD}
       POSTGRES_DB: ${TYPEORM_DATABASE}
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     ports:
+      # Exposed on the host so you can also run the API locally with `npm run start:dev`.
       - ${TYPEORM_PORT}:5432
-    env_file:
-      - .env
-    networks:
-      - app-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${TYPEORM_USERNAME} -d ${TYPEORM_DATABASE}']
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   app:
-    container_name: app
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
+    restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Inside the compose network the database is reachable as `db` on its default port.
+      TYPEORM_HOST: db
+      TYPEORM_PORT: 5432
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - 7001:${API_PORT}
-    restart: always
-    networks:
-      - app-network
 
 volumes:
   pgdata:
-
-
-networks:
-  app-network:
-    driver: bridge
