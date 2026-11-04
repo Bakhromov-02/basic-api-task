@@ -31,5 +31,4 @@ export class ResponseDtoHelper<T> {
       data,
     };
   }
-
 }
