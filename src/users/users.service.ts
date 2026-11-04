@@ -1,7 +1,8 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  BadRequestException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -9,159 +10,145 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { UpdateUserDto, UserQueryDto } from './dto';
 import { User } from './entities/user.entity';
 
-import { UserAuthDto } from '../auth/dto';
+import { SignupDto } from '../auth/dto';
 
 import { PageDto } from '@common/dtos';
 import { RequestUser } from '@common/interfaces';
 import { CalculateTotalPages } from '@common/functions';
 import { HashHelper, ResponseDtoHelper } from '@common/helpers';
 
+/** Escape LIKE wildcards so user input is matched literally. */
+const escapeLike = (value: string) => value.replace(/[\\%_]/g, '\\$&');
+
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
-
     private readonly dataSource: DataSource,
   ) {}
 
-  async create(dto: UserAuthDto) {
-    const { email, password } = dto;
-
-    const passwordHash = await HashHelper.hash(password);
-    try {
-      const createdUser = await this.usersRepository
-        .createQueryBuilder()
-        .insert()
-        .values({ email, password: passwordHash })
-        .returning('*')
-        .execute()
-        .then((result) => result.generatedMaps[0]);
-
-      return createdUser;
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
-  }
-
-  async update(
-    id: number,
-    updateUserDto: UpdateUserDto,
-    user: RequestUser,
-  ): Promise<ResponseDtoHelper<any>> {
-    const { password: plainPass, name } = updateUserDto;
-    const { id: userId } = user;
-
-    if (id !== userId) {
-      throw new BadRequestException();
-    }
-
-    await this.findOne(id);
-    const password = plainPass ? await HashHelper.hash(plainPass) : undefined;
-
-    try {
-      await this.usersRepository
-        .createQueryBuilder()
-        .update({ name, password })
-        .where({ id })
-        .execute();
-
-      return ResponseDtoHelper.success(undefined);
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
-  }
-
-  async remove(id: number, user: RequestUser): Promise<ResponseDtoHelper<any>> {
-    const { id: userId } = user;
-    if (id !== userId) {
-      throw new BadRequestException();
-    }
-    await this.findOne(id);
-
-    try {
-      await this.dataSource.transaction(async (manager) => {
-        await manager
-          .createQueryBuilder(User, 'user')
-          .update({ email: null })
-          .where({ id })
-          .execute();
-
-        await manager
-          .createQueryBuilder()
-          .softDelete()
-          .from(User)
-          .where({ id })
-          .execute();
-      });
-    
-
-      return ResponseDtoHelper.success(undefined);
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
+  async create({ email, password }: SignupDto): Promise<User> {
+    const user = this.usersRepository.create({
+      email,
+      password: await HashHelper.hash(password),
+    });
+    // A unique-email race is caught by the DB constraint and mapped to 409 by the exception filter.
+    return this.usersRepository.save(user);
   }
 
   async findAll(query: UserQueryDto): Promise<PageDto<User>> {
     const { email, name, page = 1, limit = 10 } = query;
-    try {
-      const usersQuery = this.usersRepository.createQueryBuilder('user');
+    const usersQuery = this.usersRepository.createQueryBuilder('user');
 
-      if (name) {
-        usersQuery.andWhere('user.name ILIKE :name', { name: `%${name}%` });
-      }
-      if (email) {
-        usersQuery.andWhere('user.email ILIKE :email', { email: `%${email}%` });
-      }
-
-      const [users, count] = await usersQuery
-        .orderBy('user.createdAt', 'DESC')
-        .skip((page - 1) * limit)
-        .take(limit)
-        .getManyAndCount();
-
-      const totalPages = CalculateTotalPages(count, limit);
-
-      return { data: users, totalPages, currentPage: page };
-    } catch (error) {
-      console.log(error);
-      throw error;
+    if (name) {
+      usersQuery.andWhere('user.name ILIKE :name', {
+        name: `%${escapeLike(name)}%`,
+      });
     }
+    if (email) {
+      usersQuery.andWhere('user.email ILIKE :email', {
+        email: `%${escapeLike(email)}%`,
+      });
+    }
+
+    const [users, total] = await usersQuery
+      .orderBy('user.createdAt', 'DESC')
+      .addOrderBy('user.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: users,
+      currentPage: page,
+      limit,
+      total,
+      totalPages: CalculateTotalPages(total, limit),
+    };
   }
 
   async findOne(id: number): Promise<ResponseDtoHelper<User>> {
-    try {
-      const user = await this.usersRepository
-        .createQueryBuilder('user')
-        .where('user.id = :id', { id })
-        .getOne();
-
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      return ResponseDtoHelper.success(user);
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
+    return ResponseDtoHelper.success(await this.getByIdOrFail(id));
   }
 
-  async getOneByEmail(email: string): Promise<User | null> {
-    try {
-      const user = await this.usersRepository
-        .createQueryBuilder('user')
-        .where('user.email = :email', { email })
-        .addSelect('user.password')
-        .getOne();
+  async update(
+    id: number,
+    dto: UpdateUserDto,
+    user: RequestUser,
+  ): Promise<ResponseDtoHelper<User>> {
+    this.assertSelf(id, user, 'update');
 
-      return user;
-    } catch (error) {
-      console.log(error);
-      throw error;
+    if (dto.name === undefined && dto.password === undefined) {
+      throw new BadRequestException('Provide at least one field to update');
+    }
+
+    await this.getByIdOrFail(id);
+
+    const changes: Partial<User> = {};
+    if (dto.name !== undefined) changes.name = dto.name;
+    if (dto.password !== undefined) {
+      changes.password = await HashHelper.hash(dto.password);
+      // Changing the password signs out every other session.
+      changes.rtHash = null;
+    }
+
+    await this.usersRepository.update({ id }, changes);
+    return ResponseDtoHelper.success(await this.getByIdOrFail(id));
+  }
+
+  async remove(
+    id: number,
+    user: RequestUser,
+  ): Promise<ResponseDtoHelper<null>> {
+    this.assertSelf(id, user, 'delete');
+    await this.getByIdOrFail(id);
+
+    await this.dataSource.transaction(async (manager) => {
+      // Release the email so it can be registered again, and end all sessions.
+      await manager.update(User, { id }, { email: null, rtHash: null });
+      await manager.softDelete(User, { id });
+    });
+
+    return ResponseDtoHelper.success(null, 'Account deleted');
+  }
+
+  /** Active (not soft-deleted) user, used by the access-token strategy. */
+  findActiveById(id: number): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { id } });
+  }
+
+  findWithRefreshTokenHash(id: number): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder('user')
+      .addSelect('user.rtHash')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
+  async setRefreshTokenHash(id: number, rtHash: string | null): Promise<void> {
+    await this.usersRepository.update({ id }, { rtHash });
+  }
+
+  getOneByEmail(email: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password')
+      .where('user.email = :email', { email })
+      .getOne();
+  }
+
+  private async getByIdOrFail(id: number): Promise<User> {
+    const user = await this.findActiveById(id);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  private assertSelf(id: number, user: RequestUser, action: string) {
+    if (id !== user.id) {
+      throw new ForbiddenException(`You can only ${action} your own account`);
     }
   }
 }

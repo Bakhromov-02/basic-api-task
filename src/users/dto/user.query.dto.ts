@@ -1,14 +1,17 @@
-import { Length, IsEmail, IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, MaxLength } from 'class-validator';
 
 import { Pagination } from '@common/query-dtos';
 
 export class UserQueryDto extends Pagination {
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
+  /** Case-insensitive partial match on email */
   @IsOptional()
   @IsString()
-  @Length(3, 50)
+  @MaxLength(100)
+  email?: string;
+
+  /** Case-insensitive partial match on name */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   name?: string;
 }

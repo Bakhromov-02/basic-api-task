@@ -1,4 +1,7 @@
 export interface RequestUser {
   id: number;
-  aud?: string;
+}
+
+export interface RequestUserWithRefreshToken extends RequestUser {
+  refreshToken: string;
 }

@@ -6,6 +6,7 @@ import {
   Query,
   Delete,
   Controller,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
@@ -15,9 +16,13 @@ import { UsersService } from './users.service';
 
 import { PageDto } from '@common/dtos';
 import { ResponseDtoHelper } from '@common/helpers';
-import { ApiBearerAuthConst } from '@common/constants';
-import { ApiCustomResponse, ApiPaginatedResponse, GetUser } from '@common/decorators';
 import { RequestUser } from '@common/interfaces';
+import { ApiBearerAuthConst } from '@common/constants';
+import {
+  ApiCustomResponse,
+  ApiPaginatedResponse,
+  GetUser,
+} from '@common/decorators';
 
 @ApiBearerAuth(ApiBearerAuthConst)
 @ApiTags('users')
@@ -32,22 +37,34 @@ export class UsersController {
   }
 
   @ApiCustomResponse(User)
-  @Get(':id')
-  findOne(@Param('id') id: string): Promise<ResponseDtoHelper<User>> {
-    return this.usersService.findOne(+id);
+  @Get('me')
+  me(@GetUser() user: RequestUser): Promise<ResponseDtoHelper<User>> {
+    return this.usersService.findOne(user.id);
   }
 
+  @ApiCustomResponse(User)
+  @Get(':id')
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ResponseDtoHelper<User>> {
+    return this.usersService.findOne(id);
+  }
+
+  @ApiCustomResponse(User)
   @Patch(':id')
   update(
-    @Param('id') id: string,
-    @Body() updateUserDto: UpdateUserDto,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserDto,
     @GetUser() user: RequestUser,
-  ) {
-    return this.usersService.update(+id, updateUserDto, user);
+  ): Promise<ResponseDtoHelper<User>> {
+    return this.usersService.update(id, dto, user);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @GetUser() user: RequestUser) {
-    return this.usersService.remove(+id, user);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() user: RequestUser,
+  ): Promise<ResponseDtoHelper<null>> {
+    return this.usersService.remove(id, user);
   }
 }

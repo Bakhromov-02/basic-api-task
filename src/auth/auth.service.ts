@@ -1,128 +1,119 @@
-import { JwtService } from '@nestjs/jwt';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 
-import { AuthResponseDto, UserAuthDto } from './dto';
-import { JwtPayload, Tokens } from './types';
+import { Tokens } from './types';
+import { AuthResponseDto, LoginDto, SignupDto, TokensResponseDto } from './dto';
 
 import { UsersService } from '../users/users.service';
 
-import { TokenExpireType } from '@common/types';
 import { HashHelper, ResponseDtoHelper } from '@common/helpers';
+
+const sha256 = (value: string) =>
+  createHash('sha256').update(value).digest('hex');
+
+const safeEqual = (a: string, b: string) => {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
 
 @Injectable()
 export class AuthService {
-  constructor(
-    private jwtService: JwtService,
-    private config: ConfigService,
+  // Used to keep login timing the same whether or not the email exists.
+  private dummyHash?: Promise<string>;
 
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
     private readonly usersService: UsersService,
   ) {}
 
-  async signup(dto: UserAuthDto): Promise<ResponseDtoHelper<AuthResponseDto>> {
-    const { email } = dto;
-    const userFromDb = await this.usersService.getOneByEmail(email);
-    if (userFromDb) {
-      throw new BadRequestException('User already exists');
+  async signup(dto: SignupDto): Promise<ResponseDtoHelper<AuthResponseDto>> {
+    if (await this.usersService.getOneByEmail(dto.email)) {
+      throw new ConflictException('Email is already registered');
     }
 
-    try {
-      const createdUser = await this.usersService.create(dto);
-      const tokens = await this.getTokens(
-        {
-          id: createdUser.id,
-        },
-        '1d',
-        '7d',
-      );
+    const user = await this.usersService.create(dto);
+    const tokens = await this.issueTokens(user.id);
 
-      // TODO: save tokens in db
-
-      return ResponseDtoHelper.created({
-        id: createdUser?.id,
-        email: createdUser?.email,
-        accessToken: tokens?.at,
-        refreshToken: tokens?.rt,
-      });
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
+    return ResponseDtoHelper.created({
+      id: user.id,
+      email: user.email,
+      ...tokens,
+    });
   }
 
-  async login(dto: UserAuthDto): Promise<ResponseDtoHelper<AuthResponseDto>> {
-    const { email, password } = dto;
-    const userFromDb = await this.usersService.getOneByEmail(email);
-    if (!userFromDb) {
-      throw new NotFoundException('User not found');
+  async login(dto: LoginDto): Promise<ResponseDtoHelper<AuthResponseDto>> {
+    const user = await this.usersService.getOneByEmail(dto.email);
+
+    this.dummyHash ??= HashHelper.hash(randomUUID());
+    const hash = user?.password ?? (await this.dummyHash);
+    const isValidPassword = await HashHelper.verify(hash, dto.password);
+
+    // Same error for unknown email and wrong password, so accounts can't be enumerated.
+    if (!user || !isValidPassword) {
+      throw new UnauthorizedException('Invalid email or password');
     }
 
-    const isValidPassword = await HashHelper.verify(
-      userFromDb?.password,
-      password,
-    );
-    if (!isValidPassword) {
-      throw new BadRequestException('Invalid password');
-    }
-
-    try {
-      const tokens = await this.getTokens(
-        {
-          id: userFromDb.id,
-        },
-        '1d',
-        '7d',
-      );
-
-      // TODO: save tokens in db
-      return ResponseDtoHelper.success({
-        id: userFromDb?.id,
-        email: userFromDb?.email,
-        accessToken: tokens?.at,
-        refreshToken: tokens?.rt,
-      });
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
+    const tokens = await this.issueTokens(user.id);
+    return ResponseDtoHelper.success({
+      id: user.id,
+      email: user.email,
+      ...tokens,
+    });
   }
 
-  // TODO: add refresh token logic
-  // TODO: add logout logic
+  /**
+   * Refresh token rotation: every refresh returns a new pair and invalidates the old refresh token.
+   * Reusing an already-rotated token is treated as theft and logs the user out everywhere.
+   */
+  async refresh(
+    userId: number,
+    refreshToken: string,
+  ): Promise<ResponseDtoHelper<TokensResponseDto>> {
+    const user = await this.usersService.findWithRefreshTokenHash(userId);
+    if (!user?.rtHash) {
+      throw new UnauthorizedException('Access denied');
+    }
 
-  async getTokens(
-    payload: JwtPayload,
-    atExpiresIn: TokenExpireType,
-    rtExpiresIn: TokenExpireType,
-  ): Promise<Tokens> {
-    const [at, rt] = await Promise.all([
+    if (!safeEqual(user.rtHash, sha256(refreshToken))) {
+      await this.usersService.setRefreshTokenHash(user.id, null);
+      throw new UnauthorizedException('Access denied');
+    }
+
+    return ResponseDtoHelper.success(await this.issueTokens(user.id));
+  }
+
+  async logout(userId: number): Promise<ResponseDtoHelper<null>> {
+    await this.usersService.setRefreshTokenHash(userId, null);
+    return ResponseDtoHelper.success(null, 'Logged out');
+  }
+
+  private async issueTokens(userId: number): Promise<Tokens> {
+    const sign = (secretKey: string, expiresKey: string, fallback: string) =>
       this.jwtService.signAsync(
+        { sub: userId, jti: randomUUID() },
         {
-          id: payload?.id,
-          aud: payload?.aud,
-          typ: 'Access JWT Token',
+          secret: this.config.getOrThrow<string>(secretKey),
+          expiresIn: this.config.get<string>(
+            expiresKey,
+            fallback,
+          ) as JwtSignOptions['expiresIn'],
         },
-        {
-          secret: this.config.getOrThrow('JWT_ACCESS_SECRET'),
-          expiresIn: atExpiresIn,
-        },
-      ),
-      this.jwtService.signAsync(
-        {
-          id: payload?.id,
-          aud: payload?.aud,
-          typ: 'Refresh JWT Token',
-        },
-        {
-          secret: this.config.getOrThrow('JWT_REFRESH_SECRET'),
-          expiresIn: rtExpiresIn,
-        },
-      ),
+      );
+
+    const [accessToken, refreshToken] = await Promise.all([
+      sign('JWT_ACCESS_SECRET', 'JWT_ACCESS_EXPIRES_IN', '15m'),
+      sign('JWT_REFRESH_SECRET', 'JWT_REFRESH_EXPIRES_IN', '7d'),
     ]);
 
-    return {
-      at,
-      rt,
-    };
+    await this.usersService.setRefreshTokenHash(userId, sha256(refreshToken));
+    return { accessToken, refreshToken };
   }
 }
